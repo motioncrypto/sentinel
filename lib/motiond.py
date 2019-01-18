@@ -1,5 +1,5 @@
 """
-dashd JSONRPC interface
+motiond JSONRPC interface
 """
 import sys
 import os
@@ -13,7 +13,7 @@ from decimal import Decimal
 import time
 
 
-class DashDaemon():
+class MotionDaemon():
     def __init__(self, **kwargs):
         host = kwargs.get('host', '127.0.0.1')
         user = kwargs.get('user')
@@ -22,7 +22,7 @@ class DashDaemon():
 
         self.creds = (user, password, host, port)
 
-        # memoize calls to some dashd methods
+        # memoize calls to some motiond methods
         self.governance_info = None
         self.gobject_votes = {}
 
@@ -31,10 +31,10 @@ class DashDaemon():
         return AuthServiceProxy("http://{0}:{1}@{2}:{3}".format(*self.creds))
 
     @classmethod
-    def from_dash_conf(self, dash_dot_conf):
-        from dash_config import DashConfig
-        config_text = DashConfig.slurp_config_file(dash_dot_conf)
-        creds = DashConfig.get_rpc_creds(config_text, config.network)
+    def from_motion_conf(self, motion_dot_conf):
+        from motion_config import MotionConfig
+        config_text = MotionConfig.slurp_config_file(motion_dot_conf)
+        creds = MotionConfig.get_rpc_creds(config_text, config.network)
 
         creds[u'host'] = config.rpc_host
 
@@ -44,13 +44,22 @@ class DashDaemon():
         return self.rpc_connection.__getattr__(params[0])(*params[1:])
 
     # common RPC convenience methods
-
+	    def is_testnet(self):
+        return self.rpc_command('getinfo')['testnet']					 
+													 
     def get_masternodes(self):
         mnlist = self.rpc_command('masternodelist', 'full')
         return [Masternode(k, v) for (k, v) in mnlist.items()]
 
+    def get_object_list(self):
+        try:
+            golist = self.rpc_command('gobject', 'list')
+        except JSONRPCException as e:
+            golist = self.rpc_command('mnbudget', 'show')
+        return golist							  
+			
     def get_current_masternode_vin(self):
-        from dashlib import parse_masternode_status_vin
+        from motionlib import parse_masternode_status_vin
 
         my_vin = None
 
@@ -81,6 +90,12 @@ class DashDaemon():
     # governance info convenience methods
     def superblockcycle(self):
         return self.govinfo['superblockcycle']
+
+    def governanceminquorum(self):
+        return self.govinfo['governanceminquorum']
+
+    def proposalfee(self):
+        return self.govinfo['proposalfee']
 
     def last_superblock_height(self):
         height = self.rpc_command('getblockcount')
@@ -129,7 +144,7 @@ class DashDaemon():
     # "my" votes refers to the current running masternode
     # memoized on a per-run, per-object_hash basis
     def get_my_gobject_votes(self, object_hash):
-        import dashlib
+        import motionlib
         if not self.gobject_votes.get(object_hash):
             my_vin = self.get_current_masternode_vin()
             # if we can't get MN vin from output of `masternode status`,
@@ -141,7 +156,7 @@ class DashDaemon():
 
             cmd = ['gobject', 'getcurrentvotes', object_hash, txid, vout_index]
             raw_votes = self.rpc_command(*cmd)
-            self.gobject_votes[object_hash] = dashlib.parse_raw_votes(raw_votes)
+            self.gobject_votes[object_hash] = motionlib.parse_raw_votes(raw_votes)
 
         return self.gobject_votes[object_hash]
 
@@ -165,11 +180,11 @@ class DashDaemon():
         return (current_height >= maturity_phase_start_block)
 
     def we_are_the_winner(self):
-        import dashlib
+        import motionlib
         # find the elected MN vin for superblock creation...
         current_block_hash = self.current_block_hash()
         mn_list = self.get_masternodes()
-        winner = dashlib.elect_mn(block_hash=current_block_hash, mnlist=mn_list)
+        winner = motionlib.elect_mn(block_hash=current_block_hash, mnlist=mn_list)
         my_vin = self.get_current_masternode_vin()
 
         # print "current_block_hash: [%s]" % current_block_hash
@@ -178,8 +193,17 @@ class DashDaemon():
 
         return (winner == my_vin)
 
+    @property
+    def MASTERNODE_WATCHDOG_MAX_SECONDS(self):
+        # note: self.govinfo is already memoized
+        return self.govinfo['masternodewatchdogmaxseconds']
+
+    @property
+    def SENTINEL_WATCHDOG_MAX_SECONDS(self):
+        return (self.MASTERNODE_WATCHDOG_MAX_SECONDS // 2)
+
     def estimate_block_time(self, height):
-        import dashlib
+        import motionlib
         """
         Called by block_height_to_epoch if block height is in the future.
         Call `block_height_to_epoch` instead of this method.
@@ -192,7 +216,7 @@ class DashDaemon():
         if (diff < 0):
             raise Exception("Oh Noes.")
 
-        future_seconds = dashlib.blocks_to_seconds(diff)
+        future_seconds = motionlib.blocks_to_seconds(diff)
         estimated_epoch = int(time.time() + future_seconds)
 
         return estimated_epoch
@@ -220,7 +244,7 @@ class DashDaemon():
     @property
     def has_sentinel_ping(self):
         getinfo = self.rpc_command('getinfo')
-        return (getinfo['protocolversion'] >= config.min_dashd_proto_version_with_sentinel_ping)
+        return (getinfo['protocolversion'] >= config.min_motiond_proto_version_with_sentinel_ping)
 
     def ping(self):
         self.rpc_command('sentinelping', config.sentinel_version)
