@@ -9,14 +9,14 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 import config
 
 from motiond import MotionDaemon
-from motion_config import MotionDaemon
+from motion_config import MotionConfig
 
 
 def test_motiond():
     config_text = MotionConfig.slurp_config_file(config.motion_conf)
     network = 'mainnet'
     is_testnet = False
-    genesis_hash = u'00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6'
+    genesis_hash = u'000001e9dc60dd2618e91f7b9014134922c374496b61c1a272519b1c39979d78'
     for line in config_text.split("\n"):
         if line.startswith('testnet=1'):
             network = 'testnet'
