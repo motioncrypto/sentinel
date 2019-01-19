@@ -60,7 +60,7 @@ def has_dash_conf():
     import config
     import io
 
-    valid_dash_conf = False
+    valid_motion_conf = False
 
     # ensure dash_conf exists & readable
     #
@@ -68,11 +68,11 @@ def has_dash_conf():
     # configured, including JSONRPC access in dash.conf
     try:
         f = io.open(config.dash_conf)
-        valid_dash_conf = True
+        valid_motion_conf = True
     except IOError as e:
         print(e)
 
-    return valid_dash_conf
+    return valid_motion_conf
 
 
 # === begin main
