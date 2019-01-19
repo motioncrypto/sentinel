@@ -19,23 +19,48 @@ class GovernanceClass(object):
         return self.governance_object
 
     # pass thru to GovernanceObject#vote
-    def vote(self, dashd, signal, outcome):
-        return self.go.vote(dashd, signal, outcome)
+    def vote(self, motiond, signal, outcome):
+        return self.go.vote(motiond, signal, outcome)
 
     # pass thru to GovernanceObject#voted_on
     def voted_on(self, **kwargs):
         return self.go.voted_on(**kwargs)
 
-    def vote_validity(self, dashd):
+    def vote_validity(self, motiond):
         if self.is_valid():
             printdbg("Voting valid! %s: %d" % (self.__class__.__name__, self.id))
-            self.vote(dashd, models.VoteSignals.valid, models.VoteOutcomes.yes)
+            self.vote(motiond, models.VoteSignals.valid, models.VoteOutcomes.yes)
         else:
             printdbg("Voting INVALID! %s: %d" % (self.__class__.__name__, self.id))
-            self.vote(dashd, models.VoteSignals.valid, models.VoteOutcomes.no)
+            self.vote(motiond, models.VoteSignals.valid, models.VoteOutcomes.no)
 
     def get_submit_command(self):
-        obj_data = self.serialise()
+        object_fee_tx = self.go.object_fee_tx
+
+        import motionlib
+        obj_data = motionlib.SHIM_serialise_for_motiond(self.serialise())
+
+        cmd = ['gobject', 'submit', '0', '1', str(int(time.time())), obj_data, object_fee_tx]
+
+        return cmd
+
+    def list(self):
+        dikt = {
+            "DataHex": self.serialise(),
+            "Hash": self.object_hash,
+            "CollateralHash": self.go.object_fee_tx,
+            "AbsoluteYesCount": self.go.absolute_yes_count,
+            "YesCount": self.go.yes_count,
+            "NoCount": self.go.no_count,
+            "AbstainCount": self.go.abstain_count,
+        }
+
+        # return a dict similar to motiond "gobject list" output
+        return {self.object_hash: dikt}
+
+    def get_submit_command(self):
+        import motionlib
+        obj_data = motionlib.SHIM_serialise_for_motiond(self.serialise())
 
         # new objects won't have parent_hash, revision, etc...
         cmd = ['gobject', 'submit', '0', '1', str(int(time.time())), obj_data]
@@ -46,24 +71,33 @@ class GovernanceClass(object):
 
         return cmd
 
-    def submit(self, dashd):
+    def submit(self, motiond):
         # don't attempt to submit a superblock unless a masternode
         # note: will probably re-factor this, this has code smell
-        if (self.only_masternode_can_submit and not dashd.is_masternode()):
+        if (self.only_masternode_can_submit and not motiond.is_masternode()):
             print("Not a masternode. Only masternodes may submit these objects")
             return
 
         try:
-            object_hash = dashd.rpc_command(*self.get_submit_command())
+            object_hash = motiond.rpc_command(*self.get_submit_command())
             printdbg("Submitted: [%s]" % object_hash)
         except JSONRPCException as e:
             print("Unable to submit: %s" % e.message)
 
     def serialise(self):
+        import inflection
         import binascii
         import simplejson
 
-        return binascii.hexlify(simplejson.dumps(self.get_dict(), sort_keys=True).encode('utf-8')).decode('utf-8')
+        # 'proposal', 'superblock', etc.
+        name = self._meta.name
+        obj_type = inflection.singularize(name)
+
+        return binascii.hexlify(simplejson.dumps((obj_type, self.get_dict()), sort_keys=True).encode('utf-8')).decode('utf-8')
+
+    def motiond_serialise(self):
+        import motionlib
+        return motionlib.SHIM_serialise_for_motiond(self.serialise())
 
     @classmethod
     def serialisable_fields(self):
@@ -86,7 +120,5 @@ class GovernanceClass(object):
 
         for field_name in self.serialisable_fields():
             dikt[field_name] = getattr(self, field_name)
-
-        dikt['type'] = getattr(self, 'govobj_type')
 
         return dikt
