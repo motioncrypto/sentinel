@@ -12,14 +12,14 @@ from misc import printdbg, epoch2str
 import time
 
 
-def is_valid_dash_address(address, network='mainnet'):
+def is_valid_motion_address(address, network='mainnet'):
     # Only public key addresses are allowed
     # A valid address is a RIPEMD-160 hash which contains 20 bytes
     # Prior to base58 encoding 1 version byte is prepended and
     # 4 checksum bytes are appended so the total number of
     # base58 encoded bytes should be 25.  This means the number of characters
     # in the encoding should be about 34 ( 25 * log2( 256 ) / log2( 58 ) ).
-    dash_version = 140 if network == 'testnet' else 76
+    motion_version = 140 if network == 'testnet' else 76
 
     # Check length (This is important because the base58 library has problems
     # with long addresses (which are invalid anyway).
@@ -32,10 +32,10 @@ def is_valid_dash_address(address, network='mainnet'):
         decoded = base58.b58decode_chk(address)
         address_version = ord(decoded[0:1])
     except:
-        # rescue from exception, not a valid Dash address
+        # rescue from exception, not a valid Motion address
         return False
 
-    if (address_version != dash_version):
+    if (address_version != motion_version):
         return False
 
     return True
@@ -73,13 +73,13 @@ def elect_mn(**kwargs):
 
 
 def parse_masternode_status_vin(status_vin_string):
-    status_vin_string_regex = re.compile(r'CTxIn\(COutPoint\(([0-9a-zA-Z]+),\s*(\d+)\),')
+    status_vin_string_regex = re.compile('CTxIn\(COutPoint\(([0-9a-zA-Z]+),\\s*(\d+)\),')
 
     m = status_vin_string_regex.match(status_vin_string)
 
     # To Support additional format of string return from masternode status rpc.
     if m is None:
-        status_output_string_regex = re.compile(r'([0-9a-zA-Z]+)-(\d+)')
+        status_output_string_regex = re.compile('([0-9a-zA-Z]+)\-(\d+)')
         m = status_output_string_regex.match(status_vin_string)
 
     txid = m.group(1)
@@ -95,7 +95,6 @@ def parse_masternode_status_vin(status_vin_string):
 def create_superblock(proposals, event_block_height, budget_max, sb_epoch_time):
     from models import Superblock, GovernanceObject, Proposal
     from constants import SUPERBLOCK_FUDGE_WINDOW
-    import copy
 
     # don't create an empty superblock
     if (len(proposals) == 0):
@@ -103,10 +102,9 @@ def create_superblock(proposals, event_block_height, budget_max, sb_epoch_time):
         return None
 
     budget_allocated = Decimal(0)
-    fudge = SUPERBLOCK_FUDGE_WINDOW  # fudge-factor to allow for slightly incorrect estimates
+    fudge = SUPERBLOCK_FUDGE_WINDOW  # fudge-factor to allow for slighly incorrect estimates
 
-    payments_list = []
-
+    payments = []
     for proposal in proposals:
         fmt_string = "name: %s, rank: %4d, hash: %s, amount: %s <= %s"
 
@@ -153,46 +151,83 @@ def create_superblock(proposals, event_block_height, budget_max, sb_epoch_time):
             )
         )
 
-        payment = {
-            'address': proposal.payment_address,
-            'amount': "{0:.8f}".format(proposal.payment_amount),
-            'proposal': "{}".format(proposal.object_hash)
-        }
-
-        temp_payments_list = copy.deepcopy(payments_list)
-        temp_payments_list.append(payment)
-
-        # calculate size of proposed Superblock
-        sb_temp = Superblock(
-            event_block_height=event_block_height,
-            payment_addresses='|'.join([pd['address'] for pd in temp_payments_list]),
-            payment_amounts='|'.join([pd['amount'] for pd in temp_payments_list]),
-            proposal_hashes='|'.join([pd['proposal'] for pd in temp_payments_list])
-        )
-        proposed_sb_size = len(sb_temp.serialise())
-
-        # add proposal and keep track of total budget allocation
+        # else add proposal and keep track of total budget allocation
         budget_allocated += proposal.payment_amount
-        payments_list.append(payment)
+
+        payment = {'address': proposal.payment_address,
+                   'amount': "{0:.8f}".format(proposal.payment_amount),
+                   'proposal': "{}".format(proposal.object_hash)}
+        payments.append(payment)
 
     # don't create an empty superblock
-    if not payments_list:
+    if not payments:
         printdbg("No proposals made the cut!")
         return None
 
     # 'payments' now contains all the proposals for inclusion in the
     # Superblock, but needs to be sorted by proposal hash descending
-    payments_list.sort(key=lambda k: k['proposal'], reverse=True)
+    payments.sort(key=lambda k: k['proposal'], reverse=True)
 
     sb = Superblock(
         event_block_height=event_block_height,
-        payment_addresses='|'.join([pd['address'] for pd in payments_list]),
-        payment_amounts='|'.join([pd['amount'] for pd in payments_list]),
-        proposal_hashes='|'.join([pd['proposal'] for pd in payments_list]),
+        payment_addresses='|'.join([pd['address'] for pd in payments]),
+        payment_amounts='|'.join([pd['amount'] for pd in payments]),
+        proposal_hashes='|'.join([pd['proposal'] for pd in payments]),
     )
     printdbg("generated superblock: %s" % sb.__dict__)
 
     return sb
+
+
+# shims 'til we can fix the motiond side
+def SHIM_serialise_for_motiond(sentinel_hex):
+    from models import MOTIOND_GOVOBJ_TYPES
+    # unpack
+    obj = deserialise(sentinel_hex)
+
+    # shim for motiond
+    govtype = obj[0]
+
+    # add 'type' attribute
+    obj[1]['type'] = MOTIOND_GOVOBJ_TYPES[govtype]
+
+    # superblock => "trigger" in motiond
+    if govtype == 'superblock':
+        obj[0] = 'trigger'
+
+    # motiond expects an array (even though there is only a 1:1 relationship between govobj->class)
+    obj = [obj]
+
+    # re-pack
+    motiond_hex = serialise(obj)
+    return motiond_hex
+
+
+# shims 'til we can fix the motiond side
+def SHIM_deserialise_from_motiond(motiond_hex):
+    from models import MOTIOND_GOVOBJ_TYPES
+
+    # unpack
+    obj = deserialise(motiond_hex)
+
+    # shim from motiond
+    # only one element in the array...
+    obj = obj[0]
+
+    # extract the govobj type
+    govtype = obj[0]
+
+    # superblock => "trigger" in motiond
+    if govtype == 'trigger':
+        obj[0] = govtype = 'superblock'
+
+    # remove redundant 'type' attribute
+    if 'type' in obj[1]:
+        del obj[1]['type']
+
+    # re-pack
+    sentinel_hex = serialise(obj)
+    return sentinel_hex
 
 
 # convenience
@@ -216,7 +251,7 @@ def did_we_vote(output):
     err_msg = ''
 
     try:
-        detail = output.get('detail').get('dash.conf')
+        detail = output.get('detail').get('motion.conf')
         result = detail.get('result')
         if 'errorMessage' in detail:
             err_msg = detail.get('errorMessage')
