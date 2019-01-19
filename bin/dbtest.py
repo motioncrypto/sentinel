@@ -10,7 +10,7 @@ from models import Superblock, Proposal, GovernanceObject, Setting, Signal, Vote
 from models import VoteSignals, VoteOutcomes
 from peewee import PeeweeException  # , OperationalError, IntegrityError
 from motiond import MotionDaemon
-import dashlib
+import motionlib
 from decimal import Decimal
 motiond = MotionDaemon.from_motion_conf(config.motion_conf)
 import misc
