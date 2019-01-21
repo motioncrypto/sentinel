@@ -278,13 +278,25 @@ def test_proposal_is_expired(proposal):
     assert proposal.is_expired(superblockcycle=cycle) is True
 
 
+def test_proposal_is_deletable(proposal):
+    now = misc.now()
+    assert proposal.is_deletable() is False
+
+    proposal.end_epoch = now - (86400 * 29)
+    assert proposal.is_deletable() is False
+
+    # add a couple seconds for time variance
+    proposal.end_epoch = now - ((86400 * 30) + 2)
+    assert proposal.is_deletable() is True										 
+
+	
 # deterministic ordering
 def test_approved_and_ranked(go_list_proposals):
     from motiond import MotionDaemon
     motiond = MotionDaemon.from_motion_conf(config.motion_conf)
 
     for item in go_list_proposals:
-        (go, subobj) = GovernanceObject.import_gobject_from_dashd(dashd, item)
+        (go, subobj) = GovernanceObject.import_gobject_from_motiond(motiond, item)
 
     prop_list = Proposal.approved_and_ranked(proposal_quorum=1, next_superblock_max_budget=60)
 
